@@ -8,7 +8,7 @@
 #include "elf.h"
 
 static int loadseg(pde_t *pgdir, uint64 addr, struct inode *ip, uint offset, uint sz);
-
+struct inode * dereference_link(char * path) ;
 int
 exec(char *path, char **argv)
 {
@@ -23,12 +23,12 @@ exec(char *path, char **argv)
 
   begin_op();
 
-  if((ip = namei(path)) == 0){
+  if((ip = dereference_link(path)) == 0){
     end_op();
     return -1;
   }
   ilock(ip);
-
+  
   // Check ELF header
   if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
     goto bad;

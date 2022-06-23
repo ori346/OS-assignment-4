@@ -16,8 +16,7 @@
 #include "file.h"
 #include "fcntl.h"
 
-#define MAX_DEREFRENCE 31
-
+struct inode * dereference_link(char * path) ;
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -289,7 +288,6 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
-/*
 uint64
 sys_open(void)
 {
@@ -310,7 +308,7 @@ sys_open(void)
       return -1;
     }
   } else {
-    if((ip = namei(path)) == 0){
+    if((ip = dereference_link(path)) == 0){
       end_op();
       return -1;
     }
@@ -321,33 +319,6 @@ sys_open(void)
       return -1;
     }
   }
-  
-  if ((ip->type == T_SYMLINK) && !(omode & O_NOFOLLOW)){
-    int count = 0;
-    while (ip->type == T_SYMLINK && count < MAX_DEREFRENCE) {
-      int len = 0;
-      readi(ip, 0, (uint64)&len, 0, sizeof(int));
-
-      if(len > MAXPATH)
-        panic("open: corrupted symlink inode");
-
-      readi(ip, 0, (uint64)path, sizeof(int), len + 1);
-      iunlockput(ip);
-      if((ip = namei(path)) == 0){
-        end_op();
-        return -1;
-      }
-      ilock(ip);
-      count++;
-    }
-    if (count >= MAX_DEREFRENCE) {
-      printf("We got a cycle or to many refrences\n");
-      iunlockput(ip);
-      end_op();
-      return -1;
-    }
-  }
-
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
@@ -376,118 +347,6 @@ sys_open(void)
   if((omode & O_TRUNC) && ip->type == T_FILE){
     itrunc(ip);
   }
-
-  iunlock(ip);
-  end_op();
-
-  return fd;
-}
-*/
-
-uint64
-sys_open(void)
-{
-  char path[MAXPATH];
-  int fd, omode;
-  struct file *f;
-  struct inode *ip;
-  int n;
-
-  if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
-    return -1;
-
-  begin_op();
-
-  if(omode & O_CREATE){
-    ip = create(path, T_FILE, 0, 0);
-    if(ip == 0){
-      end_op();
-      return -1;
-    }
-  } else {
-    if((ip = namei(path)) == 0){
-      end_op();
-      return -1;
-    }
-    ilock(ip);
-    if(ip->type == T_DIR && omode != O_RDONLY){
-      iunlockput(ip);
-      end_op();
-      return -1;
-    }
-  }
-
-  if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
-    iunlockput(ip);
-    end_op();
-    return -1;
-  }
-
-  if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
-    if(f)
-      fileclose(f);
-    iunlockput(ip);
-    end_op();
-    return -1;
-  }
-
-  // printf("open: path=%s; no_follow=%d\n", path, !!(omode & O_NOFOLLOW));
-
-  // resolve symlink
-  if(!(omode & O_NOFOLLOW)) {
-    uint cnt = 0;
-    while(ip->type == T_SYMLINK && cnt < 10) {
-      int len = 0;
-      readi(ip, 0, (uint64)&len, 0, sizeof(int));
-      
-      if(len > MAXPATH)
-        panic("open: corrupted symlink inode");
-      
-      readi(ip, 0, (uint64)path, sizeof(int), len + 1);
-      iunlockput(ip);
-
-      if((ip = namei(path)) == 0){
-        end_op();
-        return -1;
-      }
-
-      ilock(ip);
-      
-      if(ip->type == T_DIR && omode != O_RDONLY){
-        iunlockput(ip);
-        end_op();
-        return -1;
-      }
-
-      if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
-        iunlockput(ip);
-        end_op();
-        return -1;
-      }
-
-      // printf("open: resolve symlink -> %s len=%d\n", path, len);
-
-      cnt++;
-    }
-
-    if(cnt >= 10) {
-      iunlockput(ip);
-      end_op();
-      return -1;
-    }
-  }
-
-  if(ip->type == T_DEVICE){
-    f->type = FD_DEVICE;
-    f->major = ip->major;
-
-  } else {
-    f->type = FD_INODE;
-  }
-  f->ip = ip;
-  f->off = 0;
-  f->readable = !(omode & O_WRONLY);
-  f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
 
   iunlock(ip);
   end_op();
@@ -539,7 +398,7 @@ sys_chdir(void)
   struct proc *p = myproc();
   
   begin_op();
-  if(argstr(0, path, MAXPATH) < 0 || (ip = namei(path)) == 0){
+  if(argstr(0, path, MAXPATH) < 0 || (ip = dereference_link(path)) == 0){
     end_op();
     return -1;
   }
@@ -629,33 +488,6 @@ sys_pipe(void)
   return 0;
 }
 
-/*
-uint64
-sys_symlink(void)
-{
-  char target[MAXPATH], path[MAXARG];
-  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0){
-    return -1;
-  }
-  
-  begin_op();
-  struct inode *ip = create(path, T_SYMLINK, 0, 0);
-  if(ip == 0){
-    end_op();
-    return -1;
-  }
-
-  int len = strlen(target);
-  printf("len: %d target: %s path: %s\n" , len , target , path);
-  writei(ip, 0, (uint64)&len, 0, sizeof(int));
-  writei(ip, 0, (uint64)target, sizeof(int), len + 1);
-  iupdate(ip);
-  iunlockput(ip);
-
-  end_op();
-  return 0;
-}*/
-
 uint64 sys_symlink(void) {
   char target[MAXPATH], path[MAXPATH];
   int fd;
@@ -689,7 +521,6 @@ uint64 sys_symlink(void) {
   f->writable = 0;
 
   int len = strlen(target);
-  // printf("symlink: symlink %s -> %s len=%d\n", path, target, len);
   writei(ip, 0, (uint64)&len, 0, sizeof(int));
   writei(ip, 0, (uint64)target, sizeof(int), len + 1);
   iupdate(ip);
@@ -700,42 +531,55 @@ uint64 sys_symlink(void) {
   return 0;
 }
 
-uint64
+
+uint64 
 sys_readlink(void){
-  return 0; 
-  /*
-  char path[MAXPATH];
-  char* buf; 
-  int fd, omode;
-  struct file *f;
-  struct inode *ip;
-  int n , bufs;
-  if((n = argstr(0, path, MAXPATH)) < 0 || argaddr(1 , buf ) < 0 || argint(2, &bufs) < 0)
+  char pathname[MAXPATH] ; 
+  uint64 buf ; 
+  struct inode * ip; 
+  int bufsize = 0;
+  int deref = MAX_DEREFERENCE;
+  if(argstr(0, pathname, MAXPATH) < 0 || argaddr(1 , &buf)  < 0 || argint(2 , &bufsize) < 0)
     return -1;
-
-  if ((ip->type == T_SYMLINK)){
-    int count = 0;
-    while (ip->type == T_SYMLINK && count < MAX_DEREFRENCE) {
-      int len = 0;
-      readi(ip, 0, (uint64)&len, 0, sizeof(int));
-
-      if(len > MAXPATH)
-        panic("open: corrupted symlink inode");
-
-      readi(ip, 0, (uint64)path, sizeof(int), len + 1);
-      iunlockput(ip);
-      if((ip = namei(path)) == 0){
-        end_op();
-        return -1;
-      }
-      ilock(ip);
-      count++;
+  ip = namei(pathname);
+  if(ip == 0){
+    return -1; 
+  }
+  ilock(ip);
+  while(ip->type == T_SYMLINK && deref-- > 0){
+    readi(ip, 0 , (uint64)&bufsize, 0 , sizeof(int)); 
+    readi(ip, 0 , (uint64)&buf, sizeof(int) , bufsize + 1);
+    iunlock(ip); 
+    if((ip = namei((char *)buf)) == 0){
+      return 0; 
     }
-    if (count >= MAX_DEREFRENCE) {
-      printf("We got a cycle or to many refrences\n");
-      iunlockput(ip);
-      end_op();
-      return -1;
+    
+    ilock(ip); 
+  }
+  iunlock(ip) ; 
+  return 0; 
+
+
+}
+
+struct inode * dereference_link(char * path){
+  struct inode * output = namei(path);
+  if(output == 0)
+    return 0; 
+  ilock(output);
+  int deref = MAX_DEREFERENCE;
+  char buf[MAXPATH]; 
+  int bufsize = 0;
+  while(output->type == T_SYMLINK && deref-- > 0){
+    readi(output, 0 , (uint64)&bufsize, 0 , sizeof(int)); 
+    readi(output, 0 , (uint64)&buf, sizeof(int) , bufsize + 1);
+    iunlockput(output); 
+    if((output = namei(buf)) == 0){
+      return 0; 
     }
-  }*/
+    ilock(output); 
+  }
+  iunlock(output);
+  
+  return output; 
 }
