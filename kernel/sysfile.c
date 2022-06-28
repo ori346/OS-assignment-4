@@ -288,6 +288,9 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
+struct inode * dereference_link_ip(struct inode *);
+
+
 uint64
 sys_open(void)
 {
@@ -299,6 +302,7 @@ sys_open(void)
 
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
+
   begin_op();
 
   if(omode & O_CREATE){
@@ -308,17 +312,23 @@ sys_open(void)
       return -1;
     }
   } else {
-    if((ip = dereference_link(path)) == 0){
+    if(!(omode & O_NOFOLLOW)){
+      ip = dereference_link(path);   
+    }else{
+      ip = namei(path);  
+    }
+    if(ip == 0){
       end_op();
       return -1;
     }
     ilock(ip);
-    if(ip->type == T_DIR && omode != O_RDONLY){
+    if(ip->type == T_DIR && omode != O_RDONLY && omode != O_NOFOLLOW){
       iunlockput(ip);
       end_op();
       return -1;
     }
   }
+
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
@@ -353,6 +363,65 @@ sys_open(void)
 
   return fd;
 }
+
+
+// int
+// sys_open(void)
+// {
+//   char path[MAXPATH];
+//   int fd, omode;
+//   struct file *f;
+//   struct inode *ip;
+//   int n;
+
+//   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
+//     return -1;
+
+//   begin_op();
+
+//   if(omode & O_CREATE){
+//     ip = create(path, T_FILE, 0, 0);
+//     if(ip == 0){
+//       end_op();
+//       return -1;
+//     }
+//   } else {
+//     if((ip = namei(path)) == 0){
+//       end_op();
+//       return -1;
+//     }
+//     ilock(ip);
+//     if(ip->type == T_DIR && omode != O_RDONLY && omode != O_NOFOLLOW){
+//       iunlockput(ip);
+//       end_op();
+//       return -1;
+//     }
+//   }
+//   if (!(omode & O_NOFOLLOW)) {
+//     //iunlock(ip);
+//     if((ip = dereference_link(path)) < 0){
+//       return -1;
+//     }
+//     //ilock(ip) ;
+//   }
+
+//   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
+//     if(f)
+//       fileclose(f);
+//     iunlockput(ip);
+//     end_op();
+//     return -1;
+//   }
+//   iunlock(ip);
+//   end_op();
+
+//   f->type = FD_INODE;
+//   f->ip = ip;
+//   f->off = 0;
+//   f->readable = !(omode & O_WRONLY);
+//   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+//   return fd;
+// }
 
 uint64
 sys_mkdir(void)
@@ -520,7 +589,7 @@ uint64 sys_symlink(void) {
   f->readable = 0;
   f->writable = 0;
 
-  int len = strlen(target);
+  int len = strlen(target) + 1;
   writei(ip, 0, (uint64)&len, 0, sizeof(int));
   writei(ip, 0, (uint64)target, sizeof(int), len + 1);
   iupdate(ip);
@@ -535,10 +604,12 @@ uint64 sys_symlink(void) {
 uint64 
 sys_readlink(void){
   char pathname[MAXPATH] ; 
-  uint64 buf ; 
+  uint64 buf; 
   struct inode * ip; 
   int bufsize = 0;
+  char* bufi = "";
   int deref = MAX_DEREFERENCE;
+  //char * tmp = "";
   if(argstr(0, pathname, MAXPATH) < 0 || argaddr(1 , &buf)  < 0 || argint(2 , &bufsize) < 0)
     return -1;
   ip = namei(pathname);
@@ -546,17 +617,29 @@ sys_readlink(void){
     return -1; 
   }
   ilock(ip);
-  while(ip->type == T_SYMLINK && deref-- > 0){
-    readi(ip, 0 , (uint64)&bufsize, 0 , sizeof(int)); 
-    readi(ip, 0 , (uint64)&buf, sizeof(int) , bufsize + 1);
+  if(ip->type != T_SYMLINK){
     iunlock(ip); 
-    if((ip = namei((char *)buf)) == 0){
-      return 0; 
-    }
-    
-    ilock(ip); 
+    return -1; 
   }
-  iunlock(ip) ; 
+  //readi(ip , 0 , (uint64)&bufsize , 0 , sizeof(int)); 
+  //readi(ip , 1 , (uint64)buf , sizeof(int) , bufsize); 
+  //char* pointer = "(char*)buf";
+  //strncpy(pointer , (char*)0xb28a , bufsize) ;
+  //printf("res %s\n" , pointer);
+  //printf("cont %s" , (char *) buf);
+   while(ip->type == T_SYMLINK && deref-- > 0){
+    readi(ip , 0 , (uint64)&bufsize , 0 , sizeof(int));     
+    readi(ip , 1 , (uint64)&bufi , sizeof(int) , bufsize); 
+    readi(ip , 1 , (uint64)buf , sizeof(int) , bufsize);
+    iunlock(ip); 
+    //printf("file name: %s , and the type: %d\n" , bufi , ip->type);
+    if((ip = namei(bufi)) == 0){
+        return 0; 
+      }
+      ilock(ip);  
+      //printf("file name: %s , and the type: %d\n" , bufi , ip->type); 
+    }
+  iunlock(ip); 
   return 0; 
 
 
@@ -581,5 +664,25 @@ struct inode * dereference_link(char * path){
   }
   iunlock(output);
   
+  return output; 
+}
+
+struct inode * dereference_link_ip(struct inode * output){ 
+  int deref = MAX_DEREFERENCE;
+  char buf[MAXPATH]; 
+  int bufsize = 0;
+  //ilock(output); 
+  while(output->type == T_SYMLINK && deref-- > 0){
+    readi(output, 0 , (uint64)&bufsize, 0 , sizeof(int)); 
+    readi(output, 0 , (uint64)&buf, sizeof(int) , bufsize + 1);
+    iunlockput(output); 
+    if((output = namei(buf)) == 0){
+      return 0; 
+    }
+    ilock(output); 
+  }
+  //iunlock(output);
+  if(deref == 0)
+    return 0 ;
   return output; 
 }

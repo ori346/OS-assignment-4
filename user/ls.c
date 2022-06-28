@@ -29,7 +29,8 @@ ls(char *path)
   int fd;
   struct dirent de;
   struct stat st;
-  if((fd = open(path, 0)) < 0){
+  char buf1[512] = "";
+  if((fd = open(path, 0x004)) < 0){
     fprintf(2, "ls: cannot open %s\n", path);
     return;
   }
@@ -62,7 +63,13 @@ ls(char *path)
         printf("ls: cannot stat %s\n", buf);
         continue;
       }
-      printf("%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
+      if(st.type == T_SYMLINK){
+        if(readlink(buf , buf1 , 0) == 0){
+          printf("lnk->%s %d %d %d\n" , fmtname(buf1) ,st.type ,st.ino , st.size);  
+        }else
+          printf("readlink fail\n"); 
+      }else
+        printf("%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
     }
     break;
   }
