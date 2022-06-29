@@ -2763,6 +2763,26 @@ void sanityCheckFirstPart(char *s)
   free(d_indirect);
 }
 
+void circalur_symlink(char *s){
+    symlink("a", "b");
+    symlink("b", "a");
+    int ref_fd;
+    if ((ref_fd=open("a", O_RDWR)) <= 0){
+    unlink("a");
+    unlink("b");
+        exit(0);
+    }
+    else{
+        unlink("a");
+        unlink("b");
+        close(ref_fd);
+        exit(1);
+    }
+    
+    
+    exit(0);
+}
+
 //
 // use sbrk() to count how many free physical memory pages there are.
 // touches the pages to force allocation.
@@ -2939,8 +2959,10 @@ main(int argc, char *argv[])
     {dirfile, "dirfile"},
     {iref, "iref"},
     {forktest, "forktest"},
-    //{sanityCheckFirstPart , "sanityCheckFirstPart"} ,
-    {bigdir, "bigdir"}, // slow
+    {sanityCheckFirstPart , "sanityCheckFirstPart"} ,
+    {circalur_symlink , "circalur_symlink"},
+   
+    //{bigdir, "bigdir"}, // slow
     { 0, 0},
   };
 

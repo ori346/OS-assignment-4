@@ -607,9 +607,7 @@ sys_readlink(void){
   uint64 buf; 
   struct inode * ip; 
   int bufsize = 0;
-  char* bufi = "";
-  int deref = MAX_DEREFERENCE;
-  //char * tmp = "";
+
   if(argstr(0, pathname, MAXPATH) < 0 || argaddr(1 , &buf)  < 0 || argint(2 , &bufsize) < 0)
     return -1;
   ip = namei(pathname);
@@ -621,24 +619,10 @@ sys_readlink(void){
     iunlock(ip); 
     return -1; 
   }
-  //readi(ip , 0 , (uint64)&bufsize , 0 , sizeof(int)); 
-  //readi(ip , 1 , (uint64)buf , sizeof(int) , bufsize); 
-  //char* pointer = "(char*)buf";
-  //strncpy(pointer , (char*)0xb28a , bufsize) ;
-  //printf("res %s\n" , pointer);
-  //printf("cont %s" , (char *) buf);
-   while(ip->type == T_SYMLINK && deref-- > 0){
-    readi(ip , 0 , (uint64)&bufsize , 0 , sizeof(int));     
-    readi(ip , 1 , (uint64)&bufi , sizeof(int) , bufsize); 
-    readi(ip , 1 , (uint64)buf , sizeof(int) , bufsize);
-    iunlock(ip); 
-    //printf("file name: %s , and the type: %d\n" , bufi , ip->type);
-    if((ip = namei(bufi)) == 0){
-        return 0; 
-      }
-      ilock(ip);  
-      //printf("file name: %s , and the type: %d\n" , bufi , ip->type); 
-    }
+
+  readi(ip , 0 , (uint64)&bufsize , 0 , sizeof(int));     
+  readi(ip , 1 , (uint64)buf , sizeof(int) , bufsize);
+
   iunlock(ip); 
   return 0; 
 
@@ -671,7 +655,7 @@ struct inode * dereference_link_ip(struct inode * output){
   int deref = MAX_DEREFERENCE;
   char buf[MAXPATH]; 
   int bufsize = 0;
-  //ilock(output); 
+   
   while(output->type == T_SYMLINK && deref-- > 0){
     readi(output, 0 , (uint64)&bufsize, 0 , sizeof(int)); 
     readi(output, 0 , (uint64)&buf, sizeof(int) , bufsize + 1);
@@ -681,7 +665,7 @@ struct inode * dereference_link_ip(struct inode * output){
     }
     ilock(output); 
   }
-  //iunlock(output);
+  
   if(deref == 0)
     return 0 ;
   return output; 
